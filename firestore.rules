@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation helpers
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+             data.keys().size() >= 3 &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['userId', 'type', 'amount', 'categoryId', 'date', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.type in ['income', 'expense'] &&
+             data.amount is number &&
+             data.amount >= 0 &&
+             data.categoryId is string &&
+             data.date is timestamp &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['userId', 'name', 'icon', 'color']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 64 &&
+             data.icon is string &&
+             data.color is string && data.color.matches('^#[A-Fa-f0-9]{6}$');
+    }
+
+    function isValidBudget(data) {
+      return data.keys().hasAll(['userId', 'categoryId', 'amount', 'period', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.categoryId is string &&
+             data.amount is number && data.amount >= 0 &&
+             data.period is string &&
+             data.createdAt is timestamp;
+    }
+
+    // Collection matches
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'currency', 'pin']);
+    }
+
+    match /transactions/{transactionId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isSignedIn() && isOwner(existing().userId) && isValidTransaction(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /categories/{categoryId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidCategory(incoming());
+      allow update: if isSignedIn() && isOwner(existing().userId) && isValidCategory(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /budgets/{budgetId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidBudget(incoming());
+      allow update: if isSignedIn() && isOwner(existing().userId) && isValidBudget(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+  }
+}
